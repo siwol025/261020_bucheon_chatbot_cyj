@@ -81,14 +81,16 @@ SYSTEM_PROMPT = f"""너는 '부천 던전' 텍스트 어드벤처의 게임 마�
 - 아이템은 의미 있는 것만 inventory에 유지한다. 이전 상태는 매 턴 직접 넘겨받은 값을 이어서 쓴다.
 - 서술과 상태는 반드시 일치해야 한다. 플레이어가 획득한 아이템은 그 턴 inventory에 추가하고, 사용하거나 잃은 아이템은 제거한다. 서술에서 피해를 입거나 회복하면 hp도 그만큼 바꾼다.
 - 보스전에서 플레이어가 무모하게 행동하면 hp를 3~5 깎고, hp가 0이 되면 곧바로 패배 장면으로 끝낸다. 적절한 아이템으로 공략하면 승리로 끝낸다.
+- 전투 중에는 enemy에 적의 name, hp, max_hp를 넣고, 전투가 아니면 null로 둔다. 졸개는 max_hp 3~5, '야근 슬라임 왕'은 max_hp 12다. 플레이어의 공격이 먹히면 적 hp를 1~4 깎고, 알맞은 아이템을 쓰면 더 크게 깎는다. 서술과 적 hp는 일치해야 한다. 졸개의 hp가 0이면 쓰러뜨린 것이니 다음 장면으로 넘어간다. 이전 턴의 enemy 상태가 플레이어 메시지 끝에 주어지니 이어서 쓴다.
 - 플레이어 메시지 끝의 턴 번호를 따른다. 턴 1~4는 부천의 장소를 하나씩 탐험하며 아이템을 얻고 단서를 모으는 구간이다. 이 구간에는 슬라임 왕이 직접 나오지 않고 졸개나 함정만 나온다. 턴 5부터 슬라임 왕과 최종 전투를 시작하고 턴 10 안에 끝낸다.
 - stage에는 현재 장소 이름을 짧게 쓴다. 예: "부천역 지하상가", "만화박물관", "스타필드", "호수공원".
 - 매 장면은 새 장소나 새 사건으로 시작한다. 장면 첫머리에 장소의 감각 하나(소리, 냄새, 빛)를 넣어 몰입시킨다.
-- hp가 0이 되면 status를 "lose", 보스를 쓰러뜨리면 "win", 그 외에는 "playing".
+- hp가 0이 되면 status를 "lose", 슬라임 왕의 hp가 0이 되면 "win", 그 외에는 "playing".
 
 반드시 아래 JSON 객체 하나만 출력해. 다른 텍스트는 금지.
 {{"stage": "현재 장소", "story": "장면 묘사", "choices": ["선택지1", "선택지2", "선택지3"],
- "hp": 숫자, "inventory": ["아이템", ...], "status": "playing|win|lose"}}"""
+ "hp": 숫자, "inventory": ["아이템", ...], "enemy": null 또는 {{"name": "적 이름", "hp": 숫자, "max_hp": 숫자}},
+ "status": "playing|win|lose"}}"""
 
 
 def call_groq(messages):
@@ -150,8 +152,25 @@ def parse_turn(raw):
     return json.loads(text[start : end + 1])
 
 
-def show_turn(turn, prev_hp, prev_items):
-    hp = max(0, min(MAX_HP, int(turn.get("hp", MAX_HP))))
+def to_int(value, default):
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def get_enemy(turn):
+    """응답의 enemy를 {'name','hp','max_hp'}로 정리한다. 전투 중이 아니면 None."""
+    enemy = turn.get("enemy")
+    if not isinstance(enemy, dict) or not enemy.get("name"):
+        return None
+    max_hp = max(1, to_int(enemy.get("max_hp"), 1))
+    hp = max(0, min(max_hp, to_int(enemy.get("hp"), max_hp)))
+    return {"name": str(enemy["name"]), "hp": hp, "max_hp": max_hp}
+
+
+def show_turn(turn, prev_hp, prev_items, prev_enemy=None):
+    hp = max(0, min(MAX_HP, to_int(turn.get("hp"), MAX_HP)))
     inventory = [str(x) for x in turn.get("inventory", [])]
     scene = scene_color(turn)
 
@@ -175,6 +194,14 @@ def show_turn(turn, prev_hp, prev_items):
     shown = [paint(f"{n} NEW", "1;93") if n not in prev_items else n for n in inventory]
     print(f"{bar_line}   가방: {', '.join(shown) or '없음'}")
 
+    # 적 HP: 전투 중에만 표시하고, 피해를 입으면 굵게 강조
+    enemy = get_enemy(turn)
+    if enemy:
+        e_bar = f"[{'#' * enemy['hp']}{'.' * (enemy['max_hp'] - enemy['hp'])}]"
+        hit = prev_enemy and prev_enemy["name"] == enemy["name"] and enemy["hp"] < prev_enemy["hp"]
+        delta = f" ▼{prev_enemy['hp'] - enemy['hp']}" if hit else ""
+        print(paint(f"적 {enemy['name']} {e_bar} {enemy['hp']}/{enemy['max_hp']}{delta}", "1;95" if hit else "95"))
+
     for i, c in enumerate(turn.get("choices", []), 1):
         print(f"  {paint(i, scene)}. {c}")
     return hp
@@ -189,7 +216,7 @@ def main():
         {"role": "user", "content": "게임을 시작해줘. 첫 장면을 보여줘. hp는 10, inventory는 비어 있어. (턴 1)"},
     ]
     turn_no = 1
-    prev_hp, prev_items = MAX_HP, set()
+    prev_hp, prev_items, prev_enemy = MAX_HP, set(), None
 
     while True:
         # 2. GM 응답 받기 (JSON 파싱 실패 시 1회 재시도)
@@ -208,8 +235,8 @@ def main():
             print("[오류] GM 응답을 해석하지 못했어요. 다시 실행해 주세요.")
             return
 
-        hp = show_turn(turn, prev_hp, prev_items)
-        prev_hp, prev_items = hp, {str(x) for x in turn.get("inventory", [])}
+        hp = show_turn(turn, prev_hp, prev_items, prev_enemy)
+        prev_hp, prev_items, prev_enemy = hp, {str(x) for x in turn.get("inventory", [])}, get_enemy(turn)
         messages.append({"role": "assistant", "content": json.dumps(turn, ensure_ascii=False)})
 
         # 3. 종료 판정
@@ -232,7 +259,8 @@ def main():
             choice = "주변을 살펴본다"
 
         turn_no += 1
-        state = f"(턴 {turn_no}, 현재 hp={hp}, inventory={turn.get('inventory', [])})"
+        enemy_json = json.dumps(prev_enemy, ensure_ascii=False)
+        state = f"(턴 {turn_no}, 현재 hp={hp}, inventory={turn.get('inventory', [])}, enemy={enemy_json})"
         messages.append({"role": "user", "content": f"{choice} {state}"})
 
 

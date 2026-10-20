@@ -69,6 +69,9 @@ body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-a
 .cell { height: 12px; flex: 1; border-radius: 2px; background: var(--line); transition: background .3s; }
 .cell.on { background: var(--accent); }
 .hud[data-low="true"] .cell.on { background: var(--danger); }
+.foe { display: flex; align-items: center; gap: 12px; font: 700 13px/1 var(--font-mono); }
+.foe-label { color: var(--danger); max-width: 40%; overflow-wrap: anywhere; line-height: 1.3; }
+.cell.foe-on { background: var(--danger); }
 .inv { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
 .inv-label { font: 700 13px/1 var(--font-mono); color: var(--muted); letter-spacing: .08em; margin-right: 4px; }
 .chip { padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
@@ -116,7 +119,7 @@ button:disabled { opacity: .5; cursor: default; }
   @keyframes glowin { from { opacity: 0; } }
   .cursor::after { animation: blink .8s steps(1) infinite; }
   @keyframes blink { 50% { opacity: 0; } }
-  .hud.hit { animation: shake .45s; }
+  .hud.hit, .foe.hit { animation: shake .45s; }
   @keyframes shake { 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
   #flash.hit { animation: flashhit .55s ease-out; }
   @keyframes flashhit { from { box-shadow: inset 0 0 110px 14px rgba(220, 40, 30, .6); } to { box-shadow: inset 0 0 0 0 rgba(220, 40, 30, 0); } }
@@ -141,6 +144,7 @@ button:disabled { opacity: .5; cursor: default; }
   <section class="hud" id="hud" data-low="false" aria-label="상태">
     <div class="hp"><span class="hp-label">HP</span><div class="cells" id="cells"></div><span id="hpnum">10/10</span></div>
     <div class="inv"><span class="inv-label">가방</span><span id="inv" class="none">비어 있음</span></div>
+    <div class="foe" id="foe" hidden><span class="foe-label" id="foename"></span><div class="cells" id="foecells"></div><span id="foenum"></span></div>
   </section>
 
   <section class="log" id="log" aria-live="polite">
@@ -172,12 +176,13 @@ const SYSTEM = `너는 '부천 던전' 텍스트 어드벤처의 게임 마스�
 - inventory에는 의미 있는 아이템만 유지한다. 플레이어 메시지 끝의 현재 상태를 이어서 쓴다.
 - 서술과 상태는 반드시 일치해야 한다. 플레이어가 획득한 아이템은 그 턴 inventory에 추가하고, 사용하거나 잃은 아이템은 제거한다. 서술에서 피해를 입거나 회복하면 hp도 그만큼 바꾼다.
 - 보스전에서 플레이어가 무모하게 행동하면 hp를 3~5 깎고, hp가 0이 되면 곧바로 패배 장면으로 끝낸다. 적절한 아이템으로 공략하면 승리로 끝낸다.
+- 전투 중에는 enemy에 적의 name, hp, max_hp를 넣고, 전투가 아니면 null로 둔다. 졸개는 max_hp 3~5, '야근 슬라임 왕'은 max_hp 12다. 플레이어의 공격이 먹히면 적 hp를 1~4 깎고, 알맞은 아이템을 쓰면 더 크게 깎는다. 서술과 적 hp는 일치해야 한다. 졸개의 hp가 0이면 쓰러뜨린 것이니 다음 장면으로 넘어간다. 이전 턴의 enemy 상태가 플레이어 메시지 끝에 주어지니 이어서 쓴다.
 - 플레이어 메시지 끝의 턴 번호를 따른다. 턴 1~4는 부천의 장소를 하나씩 탐험하며 아이템을 얻고 단서를 모으는 구간이다. 이 구간에는 슬라임 왕이 직접 나오지 않고 졸다개나 함정만 나온다. 턴 5부터 슬라임 왕과 최종 전투를 시작하고 턴 10 안에 끝낸다.
 - 매 장면은 새 장소나 새 사건으로 시작한다. 장면 첫머리에 장소의 감각 하나(소리, 냄새, 빛)를 넣어 몰입시킨다.
 - stage에는 현재 장소 이름을 짧게 쓴다. 예: "부천역 지하상가".
-- hp가 0이면 status는 "lose", 보스를 쓰러뜨리면 "win", 그 외에는 "playing".
+- hp가 0이면 status는 "lose", 슬라임 왕의 hp가 0이 되면 "win", 그 외에는 "playing".
 반드시 아래 JSON 객체 하나만 출력하고 다른 텍스트는 쓰지 마.
-{"stage":"장소","story":"장면 묘사","choices":["선택지1","선택지2","선택지3"],"hp":숫자,"inventory":["아이템"],"status":"playing|win|lose"}`;
+{"stage":"장소","story":"장면 묘사","choices":["선택지1","선택지2","선택지3"],"hp":숫자,"inventory":["아이템"],"enemy":null 또는 {"name":"적 이름","hp":숫자,"max_hp":숫자},"status":"playing|win|lose"}`;
 
 const $ = (id) => document.getElementById(id);
 let history = [];
@@ -186,6 +191,7 @@ let hp = MAX_HP;
 let inventory = [];
 let busy = false;
 let currentHue = 90;
+let enemy = null;
 let shownItems = new Set();
 let skipTyping = false;
 // 장소 이름에 맞춘 배경 색조(hue). 앞에 있는 항목이 우선한다.
@@ -271,6 +277,30 @@ function typeText(el, text) {
   });
 }
 
+// 응답의 enemy를 {name, hp, max_hp}로 정리한다. 전투 중이 아니면 null.
+function normEnemy(e) {
+  if (!e || typeof e !== "object" || !e.name) return null;
+  const max = Math.max(1, Math.round(Number(e.max_hp)) || 1);
+  const raw = Math.round(Number(e.hp));
+  return { name: String(e.name), max, hp: Number.isNaN(raw) ? max : Math.max(0, Math.min(max, raw)) };
+}
+
+function renderEnemy(prev) {
+  const box = $("foe");
+  box.hidden = !enemy;
+  if (!enemy) return;
+  $("foename").textContent = "적 " + enemy.name;
+  $("foenum").textContent = enemy.hp + "/" + enemy.max;
+  const cells = $("foecells");
+  cells.replaceChildren();
+  for (let i = 0; i < enemy.max; i++) {
+    const c = document.createElement("span");
+    c.className = "cell" + (i < enemy.hp ? " foe-on" : "");
+    cells.append(c);
+  }
+  if (prev && prev.name === enemy.name && enemy.hp < prev.hp) pulse("foe", "hit");
+}
+
 function pulse(id, cls) {
   const el = $(id);
   el.classList.remove(cls);
@@ -345,6 +375,8 @@ async function step(userText, youText) {
     const t = await askGM();
     history.push({ role: "assistant", content: JSON.stringify(t) });
     const prevHp = hp;
+    const prevEnemy = enemy;
+    enemy = normEnemy(t.enemy);
     hp = Math.max(0, Math.min(MAX_HP, Math.round(Number(t.hp))));
     if (Number.isNaN(hp)) hp = MAX_HP;
     inventory = Array.isArray(t.inventory) ? t.inventory.map(String) : [];
@@ -353,6 +385,7 @@ async function step(userText, youText) {
     setStatus("");
     setScene(t);
     renderHud();
+    renderEnemy(prevEnemy);
     if (hp < prevHp) { pulse("hud", "hit"); pulse("flash", "hit"); }
     else if (hp > prevHp) pulse("flash", "heal");
     const st = addEntry(youText, t);
@@ -367,12 +400,13 @@ async function step(userText, youText) {
 }
 
 function act(choice) {
-  const state = "(턴 " + (turn + 1) + ", 현재 hp=" + hp + ", inventory=" + JSON.stringify(inventory) + ")";
+  const state = "(턴 " + (turn + 1) + ", 현재 hp=" + hp + ", inventory=" + JSON.stringify(inventory) + ", enemy=" + JSON.stringify(enemy) + ")";
   step(choice + " " + state, choice);
 }
 
 function startGame() {
   history = []; turn = 0; hp = MAX_HP; inventory = []; shownItems = new Set();
+  enemy = null; $("foe").hidden = true;
   currentHue = 90; document.documentElement.style.setProperty("--hue", "90");
   $("log").querySelectorAll(".entry:not(#intro)").forEach((n) => n.remove());
   renderHud();
