@@ -36,7 +36,13 @@ body {
   padding-left: max(16px, env(safe-area-inset-left, 0px));
   padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
-main { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; }
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; position: relative; z-index: 1; }
+
+/* 연출 레이어: 장소 색조(glow)와 피격/회복 번쩍임(flash) */
+#glow { position: fixed; inset: 0; z-index: 0; pointer-events: none;
+  background: radial-gradient(ellipse 90% 55% at 50% -5%, hsl(var(--hue, 90) 65% 50% / .2), transparent 72%); }
+#flash { position: fixed; inset: 0; z-index: 20; pointer-events: none; }
+.cursor::after { content: "▍"; color: var(--accent); margin-left: 1px; }
 
 /* 노선 표지판 */
 .sign { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
@@ -106,9 +112,23 @@ button:disabled { opacity: .5; cursor: default; }
 @media (prefers-reduced-motion: no-preference) {
   .entry { animation: rise .35s ease-out; }
   @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+  #glow.shift { animation: glowin .9s ease-out; }
+  @keyframes glowin { from { opacity: 0; } }
+  .cursor::after { animation: blink .8s steps(1) infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .hud.hit { animation: shake .45s; }
+  @keyframes shake { 20% { transform: translateX(-7px); } 40% { transform: translateX(6px); } 60% { transform: translateX(-4px); } 80% { transform: translateX(2px); } }
+  #flash.hit { animation: flashhit .55s ease-out; }
+  @keyframes flashhit { from { box-shadow: inset 0 0 110px 14px rgba(220, 40, 30, .6); } to { box-shadow: inset 0 0 0 0 rgba(220, 40, 30, 0); } }
+  #flash.heal { animation: flashheal .7s ease-out; }
+  @keyframes flashheal { from { box-shadow: inset 0 0 110px 14px rgba(70, 200, 90, .45); } to { box-shadow: inset 0 0 0 0 rgba(70, 200, 90, 0); } }
+  .chip.new { animation: pop .5s cubic-bezier(.3, 1.6, .5, 1); border-color: var(--accent); }
+  @keyframes pop { from { transform: scale(.4); opacity: 0; } }
 }
 </style>
 
+<div id="glow" aria-hidden="true"></div>
+<div id="flash" aria-hidden="true"></div>
 <main>
   <header class="sign">
     <div class="badge" aria-hidden="true">7</div>
@@ -165,6 +185,12 @@ let turn = 0;
 let hp = MAX_HP;
 let inventory = [];
 let busy = false;
+let currentHue = 90;
+let shownItems = new Set();
+let skipTyping = false;
+// 장소 이름에 맞춘 배경 색조(hue). 앞에 있는 항목이 우선한다.
+const SCENES = [["슬라임 왕", 100], ["만화박물관", 285], ["스타필드", 205], ["호수공원", 165], ["지하상가", 38], ["부천역", 38]];
+document.addEventListener("click", () => { skipTyping = true; });
 
 function renderHud() {
   const cells = $("cells");
@@ -182,8 +208,9 @@ function renderHud() {
   inv.className = "";
   inventory.forEach((name) => {
     const s = document.createElement("span");
-    s.className = "chip"; s.textContent = name; inv.append(s);
+    s.className = "chip" + (shownItems.has(name) ? "" : " new"); s.textContent = name; inv.append(s);
   });
+  shownItems = new Set(inventory);
 }
 
 function setStatus(msg, isErr) {
@@ -221,9 +248,49 @@ function addEntry(youText, t) {
   if (t.stage) {
     const s = document.createElement("div"); s.className = "stage"; s.textContent = "▸ " + t.stage; entry.append(s);
   }
-  const st = document.createElement("p"); st.className = "story"; st.textContent = t.story; entry.append(st);
+  const st = document.createElement("p"); st.className = "story"; entry.append(st);
   log.append(entry);
   entry.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  return st;
+}
+
+// 글자가 한 글자씩 나오는 타자 효과. 화면을 클릭하면 바로 끝까지 표시한다.
+function typeText(el, text) {
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) { el.textContent = text; return Promise.resolve(); }
+  skipTyping = false;
+  el.classList.add("cursor");
+  return new Promise((resolve) => {
+    let i = 0;
+    const tick = () => {
+      i = skipTyping ? text.length : i + 1;
+      el.textContent = text.slice(0, i);
+      if (i >= text.length) { el.classList.remove("cursor"); resolve(); return; }
+      setTimeout(tick, ".,!?…".includes(text[i - 1]) ? 220 : 28);
+    };
+    tick();
+  });
+}
+
+function pulse(id, cls) {
+  const el = $(id);
+  el.classList.remove(cls);
+  void el.offsetWidth;
+  el.classList.add(cls);
+  setTimeout(() => el.classList.remove(cls), 800);
+}
+
+function setScene(t) {
+  let hue = currentHue;
+  if (t.status === "win") hue = 48;
+  else if (t.status === "lose" || hp === 0) hue = 0;
+  else {
+    const found = [t.stage || "", t.story].map((text) => SCENES.find(([k]) => text.includes(k))).find(Boolean);
+    if (found) hue = found[1];
+  }
+  if (hue === currentHue) return;
+  currentHue = hue;
+  document.documentElement.style.setProperty("--hue", String(hue));
+  pulse("glow", "shift");
 }
 
 function errorMessage(e) {
@@ -277,15 +344,21 @@ async function step(userText, youText) {
   try {
     const t = await askGM();
     history.push({ role: "assistant", content: JSON.stringify(t) });
+    const prevHp = hp;
     hp = Math.max(0, Math.min(MAX_HP, Math.round(Number(t.hp))));
     if (Number.isNaN(hp)) hp = MAX_HP;
     inventory = Array.isArray(t.inventory) ? t.inventory.map(String) : [];
     turn += 1;
     busy = false;
     setStatus("");
+    setScene(t);
     renderHud();
-    addEntry(youText, t);
+    if (hp < prevHp) { pulse("hud", "hit"); pulse("flash", "hit"); }
+    else if (hp > prevHp) pulse("flash", "heal");
+    const st = addEntry(youText, t);
+    await typeText(st, t.story);
     renderControls(t);
+    $("controls").scrollIntoView({ block: "nearest", behavior: "smooth" });
   } catch (e) {
     history.pop();
     setStatus(errorMessage(e), true);
@@ -299,7 +372,8 @@ function act(choice) {
 }
 
 function startGame() {
-  history = []; turn = 0; hp = MAX_HP; inventory = [];
+  history = []; turn = 0; hp = MAX_HP; inventory = []; shownItems = new Set();
+  currentHue = 90; document.documentElement.style.setProperty("--hue", "90");
   $("log").querySelectorAll(".entry:not(#intro)").forEach((n) => n.remove());
   renderHud();
   step(SYSTEM + "\n\n게임을 시작해줘. 첫 장면을 보여줘. hp는 " + MAX_HP + ", inventory는 비어 있어. (턴 1)", null);
