@@ -11,7 +11,7 @@ Groq API(`openai/gpt-oss-20b`)가 게임 마스터가 되어 진행하는 터미
 
 ## 설치
 ```bash
-git clone https://github.com/<내계정>/261020_bucheon_chatbot_cyj.git
+git clone https://github.com/siwol025/261020_bucheon_chatbot_cyj.git
 cd 261020_bucheon_chatbot_cyj
 pip install -r requirements.txt
 ```
