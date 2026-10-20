@@ -68,6 +68,80 @@ def typewrite(text, delay=0.025):
         time.sleep(0.12 if ch in ".,!?…" else delay)
     print()
 
+# 슬라임 왕 아스키아트: 상태별로 미리 그려 둔 그림을 골라서 보여준다 (모델은 그리지 않는다)
+BOSS_ART = {
+    "idle": r"""
+      .  ^ ^ ^  .
+      |_|_|_|_|_|
+    .-'~~~~~~~~~'-.
+   /   (O)   (O)   \
+  |        __       |
+  |       \__/      |
+   \               /
+    '-._________.-'""",
+    "hit": r"""
+      .  ^ ^ ^  .
+      |_|_|_|_|_|
+    .-'~~~~~~~~~'-.
+   / ,  (X)   (X) , \
+  |   !!   ____   !! |
+  |       \____/     |
+   \_             _/
+  ~~'-._________.-'~~""",
+    "angry": r"""
+    # .  ^ ^ ^  . #
+      |_|_|_|_|_|
+    .-'~~~~~~~~~'-.
+   /   (>)   (<)   \
+  |    /VVVVVVV\    |
+  |    \_______/    |
+   \               /
+    '-._________.-'""",
+    "attack": r"""
+      .  ^ ^ ^  .
+      |_|_|_|_|_|
+    .-'~~~~~~~~~'-.
+   /   (@)   (@)   \
+  |   .-----------. |
+  |   |  GRAAAH!  | |
+   \  '-----------' /
+    '-._________.-'""",
+    "defeat": r"""
+        _^^^_
+       (_____)
+   ~  ~  ~ ~  ~  ~  ~
+  ( ~~  (x)    (x)  ~~ )
+   '~~~~~~~~~~~~~~~~~~'""",
+}
+BOSS_COLOR = {"idle": "92", "angry": "93", "hit": "1;91", "attack": "91", "defeat": "90"}
+
+
+def is_king(enemy):
+    return bool(enemy) and "슬라임 왕" in enemy["name"]
+
+
+def boss_key(turn, hp, prev_hp, enemy, prev_enemy):
+    """이번 장면에서 보여줄 슬라임 왕 그림의 종류. 슬라임 왕이 없으면 None."""
+    if turn.get("status") == "win" and (is_king(enemy) or is_king(prev_enemy)):
+        return "defeat"
+    if not is_king(enemy):
+        return None
+    if enemy["hp"] == 0:
+        return "defeat"
+    if hp < prev_hp:
+        return "attack"  # 플레이어가 피해를 입음: 반격
+    if is_king(prev_enemy) and enemy["hp"] < prev_enemy["hp"]:
+        return "hit"  # 슬라임 왕이 피해를 입음
+    return "angry" if enemy["hp"] / enemy["max_hp"] <= 0.4 else "idle"
+
+
+def show_art(key):
+    for line in BOSS_ART[key].strip("\n").split("\n"):
+        print(paint(line, BOSS_COLOR[key]))
+        if ANIM:
+            time.sleep(0.04)
+
+
 # 1. 게임 마스터(GM) 규칙 지정
 SYSTEM_PROMPT = f"""너는 '부천 던전' 텍스트 어드벤처의 게임 마스터야.
 배경: 한밤중의 부천. 부천 만화박물관, 중동 스타필드, 상동 호수공원, 부천역 지하상가가 이어진 던전이 열렸고
@@ -173,11 +247,15 @@ def show_turn(turn, prev_hp, prev_items, prev_enemy=None):
     hp = max(0, min(MAX_HP, to_int(turn.get("hp"), MAX_HP)))
     inventory = [str(x) for x in turn.get("inventory", [])]
     scene = scene_color(turn)
+    enemy = get_enemy(turn)
 
     # 장소 헤더 + 이야기(타자 효과)
     print("\n" + paint("=" * 50, scene))
     if turn.get("stage"):
         print(paint(f"▶ {turn['stage']}", f"1;{scene}"))
+    key = boss_key(turn, hp, prev_hp, enemy, prev_enemy)
+    if key:
+        show_art(key)
     typewrite(turn["story"])
     print(paint("-" * 50, scene))
 
@@ -195,7 +273,6 @@ def show_turn(turn, prev_hp, prev_items, prev_enemy=None):
     print(f"{bar_line}   가방: {', '.join(shown) or '없음'}")
 
     # 적 HP: 전투 중에만 표시하고, 피해를 입으면 굵게 강조
-    enemy = get_enemy(turn)
     if enemy:
         e_bar = f"[{'#' * enemy['hp']}{'.' * (enemy['max_hp'] - enemy['hp'])}]"
         hit = prev_enemy and prev_enemy["name"] == enemy["name"] and enemy["hp"] < prev_enemy["hp"]
