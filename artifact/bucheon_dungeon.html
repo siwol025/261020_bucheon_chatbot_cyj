@@ -1,0 +1,306 @@
+<title>부천 던전</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=JetBrains+Mono:wght@500;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+/* Layout: 한 칸짜리 세로 열. 위에 지하철 노선 표지판 같은 HUD, 아래로 이야기 로그가 쌓이고 맨 아래에 행동 입력. */
+:root {
+  --bg: #eef0ec;
+  --surface: #ffffff;
+  --ink: #16201a;
+  --muted: #5a695f;
+  --line: #d2d9d1;
+  --accent: #5a6300;
+  --accent-ink: #ffffff;
+  --danger: #b3261e;
+  --font-display: "Do Hyeon", "Noto Sans KR", sans-serif;
+  --font-body: "Noto Sans KR", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0e1411; --surface: #161e19; --ink: #e6ece7; --muted: #97a69c;
+    --line: #2a362e; --accent: #aab31a; --accent-ink: #10140a; --danger: #ff7a6e;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0e1411; --surface: #161e19; --ink: #e6ece7; --muted: #97a69c;
+  --line: #2a362e; --accent: #aab31a; --accent-ink: #10140a; --danger: #ff7a6e;
+  color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body {
+  background: var(--bg); color: var(--ink);
+  font: 400 16px/1.7 var(--font-body);
+  padding-block: 24px 48px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+main { max-width: 720px; margin: 0 auto; display: grid; gap: 20px; }
+
+/* 노선 표지판 */
+.sign { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.badge {
+  flex: none; width: 44px; height: 44px; border-radius: 50%;
+  background: var(--accent); color: var(--accent-ink);
+  display: grid; place-items: center;
+  font: 700 22px/1 var(--font-mono);
+}
+h1 { margin: 0; font: 400 clamp(28px, 6vw, 38px)/1.1 var(--font-display); letter-spacing: .01em; text-wrap: balance; }
+.sub { margin: 0; color: var(--muted); font-size: 14px; }
+
+/* HUD: 스크롤해도 상단에 고정 */
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--bg); }
+.hud {
+  position: sticky; top: calc(env(safe-area-inset-top, 0px) + 8px); z-index: 5;
+  box-shadow: 0 6px 12px -8px rgba(0, 0, 0, .35);
+  display: grid; gap: 10px; padding: 14px 16px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 10px;
+}
+.hp { display: flex; align-items: center; gap: 12px; font: 700 13px/1 var(--font-mono); }
+.hp-label { color: var(--muted); letter-spacing: .08em; }
+.cells { display: flex; gap: 3px; flex: 1; min-width: 0; }
+.cell { height: 12px; flex: 1; border-radius: 2px; background: var(--line); transition: background .3s; }
+.cell.on { background: var(--accent); }
+.hud[data-low="true"] .cell.on { background: var(--danger); }
+.inv { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 14px; }
+.inv-label { font: 700 13px/1 var(--font-mono); color: var(--muted); letter-spacing: .08em; margin-right: 4px; }
+.chip { padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--bg); }
+.none { color: var(--muted); }
+
+/* 로그 */
+.log { display: grid; gap: 18px; }
+.entry { display: grid; gap: 8px; }
+.you { margin: 0; justify-self: end; max-width: 90%; padding: 6px 14px; border-radius: 14px 14px 2px 14px; background: var(--accent); color: var(--accent-ink); font-size: 15px; }
+.story { margin: 0; padding: 16px 18px; background: var(--surface); border: 1px solid var(--line); border-radius: 2px 14px 14px 14px; max-width: 65ch; overflow-wrap: anywhere; }
+.intro p { margin: 0 0 10px; max-width: 65ch; }
+.intro p:last-child { margin: 0; }
+.stage { font: 700 12px/1 var(--font-mono); color: var(--muted); letter-spacing: .1em; }
+
+/* 컨트롤 */
+.choices { display: grid; gap: 8px; }
+button { font: inherit; cursor: pointer; }
+.choice {
+  display: flex; gap: 12px; align-items: baseline; text-align: left;
+  padding: 11px 14px; color: var(--ink); background: var(--surface);
+  border: 1px solid var(--line); border-radius: 8px;
+}
+.choice:hover:not(:disabled) { border-color: var(--accent); }
+.choice b { font: 700 13px/1 var(--font-mono); color: var(--accent); flex: none; }
+.primary {
+  justify-self: start; padding: 11px 22px; border: 0; border-radius: 8px;
+  background: var(--accent); color: var(--accent-ink); font-weight: 700;
+}
+button:disabled { opacity: .5; cursor: default; }
+:is(button, input):focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.free { display: flex; gap: 8px; }
+.free input {
+  flex: 1; min-width: 0; padding: 10px 14px; font: inherit; color: var(--ink);
+  background: var(--surface); border: 1px solid var(--line); border-radius: 8px;
+}
+.free button { padding: 10px 18px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--ink); font-weight: 500; }
+.status { min-height: 1.7em; margin: 0; font-size: 14px; color: var(--muted); }
+.status.err { color: var(--danger); }
+.end { padding: 18px; border: 1px dashed var(--accent); border-radius: 10px; display: grid; gap: 10px; }
+.end h2 { margin: 0; font: 400 26px/1.2 var(--font-display); }
+@media (prefers-reduced-motion: no-preference) {
+  .entry { animation: rise .35s ease-out; }
+  @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+}
+</style>
+
+<main>
+  <header class="sign">
+    <div class="badge" aria-hidden="true">7</div>
+    <div>
+      <h1>부천 던전</h1>
+      <p class="sub">야근 슬라임 왕을 쓰러뜨리고 칼퇴하세요 · 게임 마스터는 Claude</p>
+    </div>
+  </header>
+
+  <section class="hud" id="hud" data-low="false" aria-label="상태">
+    <div class="hp"><span class="hp-label">HP</span><div class="cells" id="cells"></div><span id="hpnum">10/10</span></div>
+    <div class="inv"><span class="inv-label">가방</span><span id="inv" class="none">비어 있음</span></div>
+  </section>
+
+  <section class="log" id="log" aria-live="polite">
+    <div class="entry intro" id="intro">
+      <div class="story">
+        <p>밤 11시 47분, 부천역. 마지막 전철이 떠난 뒤 지하상가 셔터가 저절로 올라갑니다.</p>
+        <p>만화박물관 벽의 캐릭터들이 꿈틀대고, 스타필드 쪽 하늘이 보라색으로 물듭니다. 도시 어딘가에서 이런 소리가 들립니다. "보고서... 아직 안 올렸지?"</p>
+        <p>던전을 돌파해 야근 슬라임 왕을 쓰러뜨려야 퇴근할 수 있습니다.</p>
+      </div>
+    </div>
+  </section>
+
+  <p class="status" id="status" role="status"></p>
+
+  <section id="controls">
+    <button class="primary" id="start" type="button">모험 시작하기</button>
+  </section>
+</main>
+
+<script>
+const MAX_HP = 10;
+const SYSTEM = `너는 '부천 던전' 텍스트 어드벤처의 게임 마스터야.
+배경: 한밤중의 부천. 부천 만화박물관, 중동 스타필드, 상동 호수공원, 부천역 지하상가가 이어진 던전이 열렸고 도시를 지배하는 '야근 슬라임 왕'을 쓰러뜨려야 탈출할 수 있다. 분위기는 유머러스하고 약간 황당하게.
+규칙:
+- 한 턴에 3~4문장으로 짧게 묘사하고, 플레이어가 고를 선택지를 정확히 3개 준다.
+- 플레이어가 선택지 대신 자유롭게 행동을 입력해도 그 행동을 반영한다.
+- 체력(hp)은 0~${MAX_HP}. 위험하면 줄고, 회복 아이템이나 휴식으로 오를 수 있다.
+- inventory에는 의미 있는 아이템만 유지한다. 플레이어 메시지 끝의 현재 상태를 이어서 쓴다.
+- 6~10턴 안에 최종 보스 전투로 이어지게 전개한다.
+- stage에는 현재 장소 이름을 짧게 쓴다. 예: "부천역 지하상가".
+- hp가 0이면 status는 "lose", 보스를 쓰러뜨리면 "win", 그 외에는 "playing".
+반드시 아래 JSON 객체 하나만 출력하고 다른 텍스트는 쓰지 마.
+{"stage":"장소","story":"장면 묘사","choices":["선택지1","선택지2","선택지3"],"hp":숫자,"inventory":["아이템"],"status":"playing|win|lose"}`;
+
+const $ = (id) => document.getElementById(id);
+let history = [];
+let turn = 0;
+let hp = MAX_HP;
+let inventory = [];
+let busy = false;
+
+function renderHud() {
+  const cells = $("cells");
+  cells.replaceChildren();
+  for (let i = 0; i < MAX_HP; i++) {
+    const c = document.createElement("span");
+    c.className = "cell" + (i < hp ? " on" : "");
+    cells.append(c);
+  }
+  $("hpnum").textContent = hp + "/" + MAX_HP;
+  $("hud").dataset.low = String(hp <= 3);
+  const inv = $("inv");
+  inv.replaceChildren();
+  if (!inventory.length) { inv.className = "none"; inv.textContent = "비어 있음"; return; }
+  inv.className = "";
+  inventory.forEach((name) => {
+    const s = document.createElement("span");
+    s.className = "chip"; s.textContent = name; inv.append(s);
+  });
+}
+
+function setStatus(msg, isErr) {
+  const el = $("status");
+  el.textContent = msg || "";
+  el.className = "status" + (isErr ? " err" : "");
+}
+
+function parseTurn(text) {
+  const a = text.indexOf("{"), b = text.lastIndexOf("}");
+  if (a < 0 || b < 0) throw new Error("bad-json");
+  const t = JSON.parse(text.slice(a, b + 1));
+  if (typeof t.story !== "string" || !Array.isArray(t.choices)) throw new Error("bad-json");
+  return t;
+}
+
+async function askGM() {
+  const sample = await window.claude?.use?.("sample");
+  if (!sample) throw { code: "unavailable" };
+  let lastErr;
+  for (let i = 0; i < 2; i++) {
+    const res = await sample(history, { cache: false, modelTier: "quick" });
+    try { return parseTurn(res.text); } catch (e) { lastErr = e; }
+  }
+  throw lastErr;
+}
+
+function addEntry(youText, t) {
+  const log = $("log");
+  const entry = document.createElement("div");
+  entry.className = "entry";
+  if (youText) {
+    const y = document.createElement("p"); y.className = "you"; y.textContent = youText; entry.append(y);
+  }
+  if (t.stage) {
+    const s = document.createElement("div"); s.className = "stage"; s.textContent = "▸ " + t.stage; entry.append(s);
+  }
+  const st = document.createElement("p"); st.className = "story"; st.textContent = t.story; entry.append(st);
+  log.append(entry);
+  entry.scrollIntoView({ block: "nearest", behavior: "smooth" });
+}
+
+function errorMessage(e) {
+  if (e && e.code === "not_granted") return "Claude 사용을 허용해야 게임을 진행할 수 있어요. 다시 눌러 허용해 주세요.";
+  if (e && e.code === "rate_limited") return "요청이 많아요. 잠시 후 다시 시도해 주세요.";
+  if (e && e.code === "unavailable") return "이 화면에서는 Claude 연동을 쓸 수 없어요. claude.ai에서 열어 주세요.";
+  return "Claude의 응답을 해석하지 못했어요. 한 번 더 눌러 주세요.";
+}
+
+function renderControls(t) {
+  const box = $("controls");
+  box.replaceChildren();
+  if (t.status === "win" || t.status === "lose" || hp === 0) {
+    const win = t.status === "win";
+    const end = document.createElement("div"); end.className = "end";
+    const h = document.createElement("h2"); h.textContent = win ? "CLEAR · 칼퇴 성공" : "GAME OVER · 야근 확정";
+    const p = document.createElement("p"); p.style.margin = "0";
+    p.textContent = win ? "부천에 평화와 정시 퇴근이 돌아왔습니다." : "야근의 늪에 빠졌습니다. 내일 다시 출근하세요.";
+    const b = document.createElement("button"); b.className = "primary"; b.type = "button"; b.textContent = "다시 시작"; b.onclick = startGame;
+    end.append(h, p, b); box.append(end);
+    return;
+  }
+  const list = document.createElement("div"); list.className = "choices";
+  t.choices.slice(0, 3).forEach((c, i) => {
+    const btn = document.createElement("button"); btn.type = "button"; btn.className = "choice";
+    const n = document.createElement("b"); n.textContent = String(i + 1);
+    const label = document.createElement("span"); label.textContent = c;
+    btn.append(n, label);
+    btn.onclick = () => act(c);
+    list.append(btn);
+  });
+  const form = document.createElement("form"); form.className = "free";
+  const input = document.createElement("input");
+  input.id = "free-input"; input.type = "text"; input.placeholder = "직접 행동 입력 (예: 슬라임에게 커피를 건넨다)"; input.maxLength = 120;
+  const send = document.createElement("button"); send.type = "submit"; send.textContent = "실행";
+  form.append(input, send);
+  form.onsubmit = (ev) => { ev.preventDefault(); const v = input.value.trim(); if (v) act(v); };
+  box.append(list, form);
+}
+
+function setBusy(on) {
+  busy = on;
+  $("controls").querySelectorAll("button, input").forEach((el) => { el.disabled = on; });
+  if (on) setStatus("게임 마스터가 다음 장면을 쓰는 중…");
+}
+
+async function step(userText, youText) {
+  if (busy) return;
+  history.push({ role: "user", content: userText });
+  setBusy(true);
+  try {
+    const t = await askGM();
+    history.push({ role: "assistant", content: JSON.stringify(t) });
+    hp = Math.max(0, Math.min(MAX_HP, Math.round(Number(t.hp))));
+    if (Number.isNaN(hp)) hp = MAX_HP;
+    inventory = Array.isArray(t.inventory) ? t.inventory.map(String) : [];
+    turn += 1;
+    busy = false;
+    setStatus("");
+    renderHud();
+    addEntry(youText, t);
+    renderControls(t);
+  } catch (e) {
+    history.pop();
+    setStatus(errorMessage(e), true);
+    setBusy(false);
+  }
+}
+
+function act(choice) {
+  const state = "(턴 " + (turn + 1) + ", 현재 hp=" + hp + ", inventory=" + JSON.stringify(inventory) + ")";
+  step(choice + " " + state, choice);
+}
+
+function startGame() {
+  history = []; turn = 0; hp = MAX_HP; inventory = [];
+  $("log").querySelectorAll(".entry:not(#intro)").forEach((n) => n.remove());
+  renderHud();
+  step(SYSTEM + "\n\n게임을 시작해줘. 첫 장면을 보여줘. hp는 " + MAX_HP + ", inventory는 비어 있어. (턴 1)", null);
+}
+
+$("start").onclick = startGame;
+renderHud();
+</script>
